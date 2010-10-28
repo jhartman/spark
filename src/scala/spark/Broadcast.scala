@@ -60,6 +60,9 @@ extends BroadcastRecipe  with Logging {
 
   @transient var rxSpeeds = new SpeedTracker
   @transient var txSpeeds = new SpeedTracker
+  
+  // Used only in Master
+  @transient var sourceToRxSpeedsMap = Map[SourceInfo, SpeedTracker] ()
 
   @transient var hostAddress = InetAddress.getLocalHost.getHostAddress
   @transient var listenPort = -1    
@@ -299,31 +302,37 @@ extends BroadcastRecipe  with Logging {
     }         
   }  
 
-  class TalkToGuide (gInfo: SourceInfo) 
+  class TalkToGuide (gInfo: SourceInfo)
   extends Thread with Logging {
     override def run = {
       // Connect to Guide and send this worker's information
-      var clientSocketToGuide: Socket = null        
+      var clientSocketToGuide: Socket = null
       var oosGuide: ObjectOutputStream = null
       var oisGuide: ObjectInputStream = null
 
       while (hasBlocks < totalBlocks) {
         clientSocketToGuide = new Socket(gInfo.hostAddress, gInfo.listenPort)
-        oosGuide = new ObjectOutputStream (clientSocketToGuide.getOutputStream)      
+        oosGuide = new ObjectOutputStream (clientSocketToGuide.getOutputStream)
         oosGuide.flush
         oisGuide = new ObjectInputStream (clientSocketToGuide.getInputStream)
 
         // Send local information
         oosGuide.writeObject(getLocalSourceInfo)
         oosGuide.flush
-
+        
         // Receive source information from Guide
         var suitableSources = 
-          oisGuide.readObject.asInstanceOf[ListBuffer[SourceInfo]]        
+          oisGuide.readObject.asInstanceOf[ListBuffer[SourceInfo]]
         logInfo("Received suitableSources from Master " + suitableSources)
         
         addToListOfSources (suitableSources)
         
+        // Send reception SpeedTracker
+        rxSpeeds.synchronized {
+          oosGuide.writeObject(rxSpeeds)
+        }
+        oosGuide.flush        
+
         oisGuide.close
         oosGuide.close
         clientSocketToGuide.close
@@ -685,6 +694,14 @@ extends BroadcastRecipe  with Logging {
 
           // Add this source to the listOfSources
           addToListOfSources (sourceInfo)
+          
+          // Receive reception SpeedTracker of the connected peer
+          val sourceRxSpeeds = ois.readObject.asInstanceOf[SpeedTracker]
+          
+          // Update sourceToRxSpeedsMap
+          sourceToRxSpeedsMap.synchronized {
+            sourceToRxSpeedsMap += (sourceInfo -> sourceRxSpeeds)
+          }
         } catch {
           case e: Exception => { 
             // Assuming exception caused by receiver failure: remove

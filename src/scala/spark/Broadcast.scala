@@ -561,6 +561,8 @@ extends BroadcastRecipe  with Logging {
             val bcBlock = oisSource.readObject.asInstanceOf[BroadcastBlock]
             val receptionTime = (System.currentTimeMillis - recvStartTime)
             
+            logInfo ("Received block: " + bcBlock.blockID + " from " + peerToTalkTo + " in " + receptionTime + " millis.")
+
             if (!hasBlocksBitVector.get(bcBlock.blockID)) {
               arrayOfBlocks(bcBlock.blockID) = bcBlock
               hasBlocksBitVector.synchronized {
@@ -571,8 +573,7 @@ extends BroadcastRecipe  with Logging {
               }
               hasBlocks += 1
               
-              rxSpeeds.addDataPoint (peerToTalkTo, receptionTime)
-              logInfo ("Received block: " + bcBlock.blockID + " from " + peerToTalkTo + " in " + receptionTime + " millis.")
+              rxSpeeds.addDataPoint (peerToTalkTo, receptionTime)              
             }
             
             // Send the latest SourceInfo

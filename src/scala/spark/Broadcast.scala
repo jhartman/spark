@@ -76,7 +76,7 @@ extends BroadcastRecipe  with Logging {
     sendBroadcast 
   }
 
-  def sendBroadcast () {    
+  def sendBroadcast (): Unit = {
     // Store a persistent copy in HDFS    
     // TODO: Turned OFF for now
     // val out = new ObjectOutputStream (BroadcastCH.openFileForWriting(uuid))
@@ -147,7 +147,7 @@ extends BroadcastRecipe  with Logging {
       SourceInfo (hostAddress, guidePort, totalBlocks, totalBytes))
   }
   
-  private def readObject (in: ObjectInputStream) {
+  private def readObject (in: ObjectInputStream): Unit = {
     in.defaultReadObject
     BroadcastBT.synchronized {
       val cachedVal = BroadcastBT.values.get (uuid)
@@ -186,7 +186,7 @@ extends BroadcastRecipe  with Logging {
   }
   
   // Initialize variables in the worker node. Master sends everything as 0/null 
-  private def initializeWorkerVariables = {
+  private def initializeWorkerVariables: Unit = {
     arrayOfBlocks = null
     hasBlocksBitVector = null
     numCopiesSent = null
@@ -288,29 +288,37 @@ extends BroadcastRecipe  with Logging {
   }
 
   // Add new SourceInfo to the listOfSources. Update if it exists already.
-  private def addToListOfSources (newSourceInfo: SourceInfo) = {
+  private def addToListOfSources (newSourceInfo: SourceInfo): Unit = {
+    var sourceExists = false
+    
     listOfSources.synchronized {
-      if (listOfSources.contains(newSourceInfo)) { 
-        listOfSources = listOfSources - newSourceInfo 
+      var listIter = listOfSources.iterator
+      
+      while (listIter.hasNext && !sourceExists) {
+        val sourceInfo = listIter.next
+        
+        if (sourceInfo == newSourceInfo) {
+          sourceInfo.hasBlocksBitVector.or (newSourceInfo.hasBlocksBitVector)
+          sourceExists = true
+        }
       }
-      listOfSources = listOfSources + newSourceInfo
+      
+      if (!sourceExists) {
+        listOfSources = listOfSources + newSourceInfo
+      }
     }         
   }  
   
-  private def addToListOfSources (newSourceInfos: ListBuffer[SourceInfo]) = {
-    listOfSources.synchronized {
-      newSourceInfos.foreach { srcInfo =>
-        if (listOfSources.contains(srcInfo)) { 
-          listOfSources = listOfSources - srcInfo 
-        }
-        listOfSources = listOfSources + srcInfo
-      }
-    }         
+  // Calling addToListOfSources (srcInfo) gives compile error! 
+  private def addToListOfSources (newSourceInfos: ListBuffer[SourceInfo]): Unit = {
+    newSourceInfos.foreach { newSourceInfo =>
+      addToListOfSources (newSourceInfo)
+    }
   }  
 
   class TalkToGuide (gInfo: SourceInfo)
   extends Thread with Logging {
-    override def run = {
+    override def run: Unit = {
       // Keep exchaning information until all blocks have been received
       while (hasBlocks < totalBlocks) {
         talkOnce
@@ -324,7 +332,7 @@ extends BroadcastRecipe  with Logging {
     }
     
     // Connect to Guide and send this worker's information
-    private def talkOnce = {
+    private def talkOnce: Unit = {
       var clientSocketToGuide: Socket = null        
       var oosGuide: ObjectOutputStream = null
       var oisGuide: ObjectInputStream = null
@@ -452,7 +460,7 @@ extends BroadcastRecipe  with Logging {
     // TODO: Must fix this. This might never break if broadcast fails. 
     // We should be able to break and send false. Also need to kill threads
     while (hasBlocks < totalBlocks) { 
-      Thread.sleep(1234) 
+      Thread.sleep(500) 
     }
    
     return true
@@ -462,7 +470,7 @@ extends BroadcastRecipe  with Logging {
   extends Thread with Logging {
     private var peersNowTalking = ListBuffer[SourceInfo] ()
 
-    override def run = {
+    override def run: Unit = {
       var threadPool = 
         BroadcastBT.newDaemonFixedThreadPool (BroadcastBT.MaxTxPeers)
       
@@ -473,16 +481,18 @@ extends BroadcastRecipe  with Logging {
 
         while (hasBlocks < totalBlocks && numThreadsToCreate > 0) {
           var peerToTalkTo = pickPeerToTalkTo
+          
           if (peerToTalkTo != null) {
             threadPool.execute (new TalkToPeer (peerToTalkTo))
+
+            // Add to peersNowTalking. Remove in the thread. Do this ASAP so 
+            // that pickPeerToTalkTo does not pick same peer more than once
+            peersNowTalking.synchronized { 
+              peersNowTalking = peersNowTalking + peerToTalkTo
+            }
           }
           
-          // Add to peersNowTalking. Remove in the thread. We have to do this 
-          // ASAP, otherwise pickPeerToTalkTo picks the same peer more than once
-          peersNowTalking.synchronized { 
-            peersNowTalking = peersNowTalking + peerToTalkTo
-          }
-          
+          // Decrease the counter even if no thread was created => Go to sleep.
           numThreadsToCreate = numThreadsToCreate - 1
         }
         
@@ -535,10 +545,10 @@ extends BroadcastRecipe  with Logging {
       private var oosSource: ObjectOutputStream = null
       private var oisSource: ObjectInputStream = null     
 
-      override def run = {
+      override def run: Unit = {
         // Setup the timeout mechanism
         var timeOutTask = new TimerTask {
-          override def run = {
+          override def run: Unit = {
             cleanUpConnections
           }
         }
@@ -620,7 +630,7 @@ extends BroadcastRecipe  with Logging {
         // TODO: Will implement it later.
       }
       
-      private def cleanUpConnections = {
+      private def cleanUpConnections: Unit = {
         if (oisSource != null) { 
           oisSource.close 
         }
@@ -644,7 +654,7 @@ extends BroadcastRecipe  with Logging {
     // Keep track of sources that have completed reception
     private var setOfCompletedSources = Set[SourceInfo] ()
   
-    override def run = {
+    override def run: Unit = {
       var threadPool = BroadcastBT.newDaemonCachedThreadPool
       var serverSocket: ServerSocket = null
 
@@ -704,7 +714,7 @@ extends BroadcastRecipe  with Logging {
       }
     }
     
-    private def sendStopBroadcastNotifications = {
+    private def sendStopBroadcastNotifications: Unit = {
       listOfSources.synchronized {
         listOfSources.foreach { sourceInfo => 
 
@@ -760,7 +770,7 @@ extends BroadcastRecipe  with Logging {
       // Used to select a rolling window of peers from listOfSources
       private var rollOverIndex = 0
       
-      override def run = {
+      override def run: Unit = {
         try {
           logInfo ("new GuideSingleRequest is running")
           // Connecting worker is sending in its information
@@ -830,7 +840,7 @@ extends BroadcastRecipe  with Logging {
 
   class ServeMultipleRequests
   extends Thread with Logging {
-    override def run = {
+    override def run: Unit = {
       // TODO: Not sure if this will be able to fix the number of outgoing links
       // We should have a timeout mechanism on the receiver side
       var threadPool = 
@@ -886,7 +896,7 @@ extends BroadcastRecipe  with Logging {
 
       logInfo ("new ServeSingleRequest is running")
       
-      override def run  = {
+      override def run: Unit  = {
         try {
           // Send latest local SourceInfo to the receiver
           // In the case of receiver timeout and connection close, this will 
@@ -1003,14 +1013,14 @@ extends BroadcastRecipe with Logging {
     sendBroadcast 
   }
 
-  def sendBroadcast () {
+  def sendBroadcast: Unit = {
     val out = new ObjectOutputStream (BroadcastCH.openFileForWriting(uuid))
     out.writeObject (value_)
     out.close
   }
 
   // Called by Java when deserializing an object
-  private def readObject(in: ObjectInputStream) {
+  private def readObject(in: ObjectInputStream): Unit = {
     in.defaultReadObject
     BroadcastCH.synchronized {
       val cachedVal = BroadcastCH.values.get(uuid)
@@ -1074,7 +1084,7 @@ class SpeedTracker {
   // Map[source -> (totalTime, numBlocks)]
   private var sourceToSpeedMap = Map[SourceInfo, (Long, Int)] ()
   
-  def addDataPoint (srcInfo: SourceInfo, timeInMillis: Long) = {
+  def addDataPoint (srcInfo: SourceInfo, timeInMillis: Long): Unit = {
     sourceToSpeedMap.synchronized {
       if (!sourceToSpeedMap.contains(srcInfo)) {
         sourceToSpeedMap += (srcInfo -> (timeInMillis, 1))
@@ -1101,7 +1111,7 @@ extends Logging {
 
   // Will be called by SparkContext or Executor before using Broadcast
   // Calls all other initializers here
-  def initialize (isMaster: Boolean) {
+  def initialize (isMaster: Boolean): Unit = {
     synchronized {
       if (!initialized) {
         // Initialization for CentralizedHDFSBroadcast
@@ -1158,7 +1168,7 @@ extends Logging {
   private var MaxChatTime_ = 250
   private var MaxChatBlocks_ = 1024
 
-  def initialize (isMaster__ : Boolean) {
+  def initialize (isMaster__ : Boolean): Unit = {
     synchronized {
       if (!initialized) {
         MasterHostAddress_ = 
@@ -1230,14 +1240,14 @@ extends Logging {
   def MaxChatTime = MaxChatTime_
   def MaxChatBlocks = MaxChatBlocks_
   
-  def registerValue (uuid: UUID, gInfo: SourceInfo) = {
+  def registerValue (uuid: UUID, gInfo: SourceInfo): Unit = {
     valueToGuideMap.synchronized {    
       valueToGuideMap += (uuid -> gInfo)
       logInfo ("New value registered with the Tracker " + valueToGuideMap)             
     }
   }
   
-  def unregisterValue (uuid: UUID) = {
+  def unregisterValue (uuid: UUID): Unit = {
     valueToGuideMap.synchronized {
       valueToGuideMap (uuid) = SourceInfo ("", SourceInfo.TxOverGoToHDFS, 
         SourceInfo.UnusedParam, SourceInfo.UnusedParam)
@@ -1278,7 +1288,7 @@ extends Logging {
 
   class TrackMultipleValues
   extends Thread with Logging {
-    override def run = {
+    override def run: Unit = {
       var threadPool = BroadcastBT.newDaemonCachedThreadPool
       var serverSocket: ServerSocket = null
       
@@ -1289,7 +1299,6 @@ extends Logging {
         while (true) {
           var clientSocket: Socket = null
           try {
-            // TODO: 
             serverSocket.setSoTimeout (TrackerSocketTimeout)
             clientSocket = serverSocket.accept
           } catch {
@@ -1301,7 +1310,7 @@ extends Logging {
           if (clientSocket != null) {
             try {
               threadPool.execute (new Thread {
-                override def run = {
+                override def run: Unit = {
                   val oos = new ObjectOutputStream (clientSocket.getOutputStream)
                   oos.flush
                   val ois = new ObjectInputStream (clientSocket.getInputStream)
@@ -1353,7 +1362,7 @@ extends Logging {
   private var compress: Boolean = false
   private var bufferSize: Int = 65536
 
-  def initialize () {
+  def initialize: Unit = {
     synchronized {
       if (!initialized) {
         bufferSize = System.getProperty("spark.buffer.size", "65536").toInt
